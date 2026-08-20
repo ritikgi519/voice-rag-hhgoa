@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Voice RAG | HH Goa 2026</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-zinc-950 text-zinc-100 flex flex-col items-center min-h-screen p-6 font-sans">
+  <div class="w-full max-w-2xl bg-zinc-900 border border-zinc-800 rounded-2xl p-6 shadow-2xl space-y-6">
+    <div class="flex justify-between items-center border-b border-zinc-800 pb-4">
+      <div>
+        <h1 class="text-xl font-bold text-emerald-400 tracking-tight">Voice RAG Engine</h1>
+        <p class="text-xs text-zinc-400">MSMARCO-XI • Sub-200ms Latency Harness</p>
+      </div>
+      <span class="px-2.5 py-1 text-xs font-semibold bg-emerald-950 text-emerald-300 border border-emerald-800 rounded-full">#RAGInGoa</span>
+    </div>
+
+    <!-- Record Controls -->
+    <div class="flex flex-col items-center justify-center space-y-4 py-4">
+      <button id="recordBtn" class="w-20 h-20 bg-rose-600 hover:bg-rose-700 active:scale-95 text-white font-bold rounded-full shadow-lg flex items-center justify-center transition">
+        🎙️
+      </button>
+      <p id="statusText" class="text-xs text-zinc-400 font-mono">Click to speak (English or Hindi)</p>
+    </div>
+
+    <!-- Output Section -->
+    <div class="space-y-4">
+      <div>
+        <label class="text-xs uppercase tracking-wider text-zinc-400 font-semibold">Transcription</label>
+        <div id="transcriptBox" class="mt-1 p-3 bg-zinc-950 border border-zinc-800 rounded-lg min-h-[44px] text-sm text-zinc-300 font-mono">...</div>
+      </div>
+
+      <div>
+        <label class="text-xs uppercase tracking-wider text-zinc-400 font-semibold">Grounded Answer</label>
+        <div id="answerBox" class="mt-1 p-3 bg-zinc-950 border border-zinc-800 rounded-lg min-h-[56px] text-sm text-zinc-100">...</div>
+      </div>
+
+      <!-- Real-Time Latency Analytics Breakdown -->
+      <div class="grid grid-cols-3 gap-3 pt-2">
+        <div class="p-3 bg-zinc-950 border border-zinc-800 rounded-lg text-center">
+          <p class="text-[10px] uppercase text-zinc-400">Retrieval</p>
+          <p id="retLatency" class="text-base font-bold text-emerald-400 font-mono">0 ms</p>
+        </div>
+        <div class="p-3 bg-zinc-950 border border-zinc-800 rounded-lg text-center">
+          <p class="text-[10px] uppercase text-zinc-400">Inference</p>
+          <p id="infLatency" class="text-base font-bold text-cyan-400 font-mono">0 ms</p>
+        </div>
+        <div class="p-3 bg-zinc-950 border border-zinc-800 rounded-lg text-center">
+          <p class="text-[10px] uppercase text-zinc-400">Total RAG</p>
+          <p id="totLatency" class="text-base font-bold text-amber-400 font-mono">0 ms</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let mediaRecorder;
+    let audioChunks = [];
+    const recordBtn = document.getElementById('recordBtn');
+    const statusText = document.getElementById('statusText');
+
+    recordBtn.addEventListener('click', async () => {
+      if (!mediaRecorder || mediaRecorder.state === 'inactive') {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        mediaRecorder = new MediaRecorder(stream);
+        audioChunks = [];
+        
+        mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
+        mediaRecorder.onstop = sendAudio;
+
+        mediaRecorder.start();
+        recordBtn.classList.replace('bg-rose-600', 'bg-zinc-600');
+        statusText.innerText = "Recording... Click again to stop";
+      } else {
+        mediaRecorder.stop();
+        recordBtn.classList.replace('bg-zinc-600', 'bg-rose-600');
+        statusText.innerText = "Processing pipeline...";
+      }
+    });
+
+    async function sendAudio() {
+      const audioBlob = new Blob(audioChunks, { type: 'audio/wav' });
+      const formData = new FormData();
+      formData.append('file', audioBlob, 'query.wav');
+
+      try {
+        const res = await fetch('/api/voice-query', { method: 'POST', body: formData });
+        const data = await res.json();
+        
+        document.getElementById('transcriptBox').innerText = data.transcript || "No speech detected";
+        document.getElementById('answerBox').innerText = data.rag.answer;
+        document.getElementById('retLatency').innerText = `${data.rag.retrieval_latency_ms} ms`;
+        document.getElementById('infLatency').innerText = `${data.rag.inference_latency_ms} ms`;
+        document.getElementById('totLatency').innerText = `${data.rag.total_latency_ms} ms`;
+        statusText.innerText = "Ready for next query";
+      } catch (err) {
+        statusText.innerText = "Error executing pipeline";
+      }
+    }
+  </script>
+</body>
+</html>

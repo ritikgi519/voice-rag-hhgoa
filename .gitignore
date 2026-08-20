@@ -1,0 +1,10 @@
+﻿.venv/
+venv/
+__pycache__/
+*.pyc
+hf_cache/
+qdrant_db/
+qdrant_data/
+.env
+*.wav
+*.mp3
