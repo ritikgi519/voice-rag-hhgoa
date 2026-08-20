@@ -1,18 +1,33 @@
 import os
-
-os.environ["HF_HOME"] = os.path.abspath("./hf_cache")
-os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
-os.makedirs("./hf_cache", exist_ok=True)
-
 import time
+import requests
 from dotenv import load_dotenv
 from groq import Groq
 from guardrails import GuardrailEngine
 from pydantic import BaseModel
 from qdrant_client import QdrantClient
-from sentence_transformers import SentenceTransformer
 
 load_dotenv()
+
+HF_API_URL = "https://api-inference.huggingface.co/pipeline/feature-extraction/intfloat/multilingual-e5-small"
+HF_HEADERS = {"Authorization": f"Bearer {os.getenv('HF_TOKEN', '')}"}
+
+
+def get_embedding(text: str) -> list[float]:
+    """Generates normalized embeddings via HF Inference API without local PyTorch."""
+    response = requests.post(
+        HF_API_URL,
+        headers=HF_HEADERS,
+        json={"inputs": text, "options": {"wait_for_model": True}},
+        timeout=10,
+    )
+    if response.status_code == 200:
+        res = response.json()
+        # Handle single vs batch response shapes
+        if isinstance(res, list) and len(res) > 0 and isinstance(res[0], list):
+            return res[0]
+        return res
+    raise RuntimeError(f"HF Inference Error ({response.status_code}): {response.text}")
 
 
 class RAGResult(BaseModel):
@@ -28,7 +43,6 @@ class RAGResult(BaseModel):
 class VoiceRAGHarness:
 
     def __init__(self, db_path: str = "./qdrant_db"):
-        self.embedder = SentenceTransformer("intfloat/multilingual-e5-small")
         self.qdrant = QdrantClient(path=db_path)
         self.groq = Groq(api_key=os.getenv("GROQ_API_KEY"))
         self.collection = "msmarco_xi"
@@ -50,11 +64,20 @@ class VoiceRAGHarness:
                 inference_latency_ms=0.0,
             )
 
-        # 2. Vector Retrieval (<15ms)
+        # 2. Vector Retrieval (API Embedding)
         t_ret_start = time.perf_counter()
-        q_vec = self.embedder.encode(
-            f"query: {query}", normalize_embeddings=True
-        ).tolist()
+        try:
+            q_vec = get_embedding(f"query: {query}")
+        except Exception as e:
+            return RAGResult(
+                query=query,
+                answer=f"Embedding generation error: {str(e)}",
+                grounded=False,
+                retrieval_score=0.0,
+                total_latency_ms=round((time.perf_counter() - t_start) * 1000, 2),
+                retrieval_latency_ms=0.0,
+                inference_latency_ms=0.0,
+            )
 
         if hasattr(self.qdrant, "query_points"):
             search_res = self.qdrant.query_points(
@@ -86,7 +109,7 @@ class VoiceRAGHarness:
             )
 
         # Parent Passage Extraction
-        parent_passages = list({h.payload["parent_passage"] for h in hits})
+        parent_passages = list({h.payload.get("parent_passage", h.payload.get("text", "")) for h in hits})
         context_block = "\n---\n".join(parent_passages)
 
         # 4. Low-Latency LLM Inference via Groq
