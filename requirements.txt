@@ -9,4 +9,3 @@ uvicorn
 python-multipart
 python-dotenv
 datasets
-gradio 
