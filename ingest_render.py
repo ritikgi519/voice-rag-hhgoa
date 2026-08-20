@@ -44,31 +44,45 @@ def run_ingest():
         vectors_config=VectorParams(size=384, distance=Distance.COSINE),
     )
 
-    print("Fetching dataset sample from Hugging Face...")
-    dataset = load_dataset("castorini/msmarco-hindi-100k", split="train", streaming=True)
+    print("Fetching dataset sample from ai4bharat/MSMARCO-XI (Hindi)...")
+    # Official task dataset loaded via streaming
+    dataset = load_dataset("ai4bharat/MSMARCO-XI", "hi", split="train", streaming=True)
 
     points = []
-    # Index 100 sample documents via API
-    for idx, item in enumerate(dataset.take(100)):
-        passage = item.get("passage", "")
-        if not passage:
-            continue
-        try:
-            vector = get_embedding(f"passage: {passage}")
-            points.append(
-                PointStruct(
-                    id=idx,
-                    vector=vector,
-                    payload={
-                        "parent_passage": passage,
-                        "text": passage,
-                        "id": str(item.get("id", idx)),
-                    },
+    idx = 0
+
+    for item in dataset:
+        passages_data = item.get("passages", {})
+        # Extract translated Hindi passages from structure
+        translated_passages = passages_data.get("Translated_passages", [])
+        
+        for passage in translated_passages:
+            if not passage or len(passage.strip()) < 10:
+                continue
+            
+            try:
+                vector = get_embedding(f"passage: {passage}")
+                points.append(
+                    PointStruct(
+                        id=idx,
+                        vector=vector,
+                        payload={
+                            "parent_passage": passage,
+                            "text": passage,
+                            "id": str(item.get("query_id", idx)),
+                        },
+                    )
                 )
-            )
-            time.sleep(0.05)  # slight pause for API rate limits
-        except Exception as e:
-            print(f"Skipping index {idx} due to error: {e}")
+                idx += 1
+                time.sleep(0.04)
+            except Exception as e:
+                print(f"Skipping passage due to error: {e}")
+            
+            if idx >= 60:
+                break
+        
+        if idx >= 60:
+            break
 
     client.upsert(collection_name=collection_name, points=points)
     print(f"Ingested {len(points)} records into Render Qdrant instance successfully.")
